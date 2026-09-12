@@ -1,0 +1,63 @@
+<div class="diary-layout" x-data="diaryPlugin()">
+    <div class="diary-composer">
+        <div class="diary-header">
+            <span class="diary-header-label">New entry</span>
+            <div class="diary-date-picker">
+                <input type="datetime-local" class="diary-date-input" x-model="entryAt">
+                <span class="diary-saving" x-show="saving">Saving...</span>
+            </div>
+        </div>
+        <textarea
+            class="diary-textarea"
+            x-model="content"
+            placeholder="What happened? Speak or type."
+            @input="AM.utils.autoResize($event.target)"
+        ></textarea>
+        <div class="diary-actions">
+            <button
+                class="input-bar-mic"
+                @pointerdown.prevent="AM.voice && AM.voice.handleMicDown('diary', $event)"
+                @pointerup.prevent="AM.voice && AM.voice.handleMicUp('diary')"
+                @pointercancel.prevent="AM.voice && AM.voice.handleMicCancel('diary')"
+                @click.prevent="AM.voice && AM.voice.handleMicClick('diary')"
+                :class="{ recording: $store.voice && $store.voice.target === 'diary' }"
+                aria-label="Tap to toggle or hold to record"
+            >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+            </button>
+            <span class="recording-timer" x-show="$store.voice && $store.voice.target === 'diary'" x-text="$store.voice ? $store.voice.time : '00:00'"></span>
+            <button
+                class="save-btn diary-save-btn"
+                @click="saveDiary()"
+                :disabled="!content.trim() || saving"
+                x-text="saving ? 'Saving...' : 'Save Entry'"
+            ></button>
+        </div>
+    </div>
+
+    <div class="diary-timeline">
+        <div class="timeline-header">Recent entries</div>
+        <template x-if="timeline.length === 0">
+            <div class="timeline-empty">No entries yet</div>
+        </template>
+        <template x-for="entry in timeline" :key="entry.id">
+            <div class="timeline-card" @click="openTimelineEntry(entry)" style="cursor: pointer;">
+                <div class="timeline-card-date" x-text="AM.utils.formatDate(entry.entry_at || entry.date)"></div>
+                <div class="timeline-card-preview" x-text="truncate(entry.preview, 120)"></div>
+                <div class="timeline-card-meta">
+                    <span class="mood-badge" x-show="entry.mood" x-text="entry.mood"></span>
+                    <span class="audio-badge" x-show="entry.audio">Audio <span class="audio-icon">&#9684;</span></span>
+                    <span class="text-label" x-show="!entry.audio">text</span>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <template x-if="selectedEntry">
+        <div class="diary-reader">
+            <button class="note-back-btn" @click="closeTimelineEntry()">&#8592; Back</button>
+            <div class="diary-reader-date" x-text="AM.utils.formatDate(selectedEntry.entry_at || selectedEntry.date)"></div>
+            <div class="diary-reader-content" x-html="AM.utils.renderMarkdown(entryContent)"></div>
+        </div>
+    </template>
+</div>

@@ -1,0 +1,146 @@
+/* ===== DIARY ===== */
+.diary-layout { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+
+.diary-composer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 24px 24px 0;
+    overflow-y: auto;
+}
+.diary-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+.diary-header-label { font-weight: 600; font-size: 14px; }
+.diary-date-picker { display: flex; align-items: center; gap: 10px; }
+.diary-date-input {
+    padding: 4px 10px;
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 12px;
+}
+.diary-date-input:focus { outline: none; border-color: var(--accent); }
+.diary-saving { font-size: 11px; color: var(--warm); font-style: italic; }
+
+.diary-textarea {
+    flex: 1;
+    width: 100%;
+    min-height: 200px;
+    padding: 20px;
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-family: var(--font-reading);
+    font-size: 16px;
+    line-height: 1.9;
+    resize: vertical;
+}
+.diary-textarea:focus { outline: none; border-color: var(--accent); }
+.diary-textarea::placeholder { color: var(--muted); font-style: italic; }
+
+.diary-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0 20px;
+}
+
+.diary-actions .save-btn {
+    flex: 1;
+    width: auto;
+    margin: 0;
+}
+
+/* Mood & Tag badges */
+.mood-badge {
+    background: rgba(196,184,224,0.1);
+    color: var(--accent);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+.tag-badge {
+    background: rgba(245,204,137,0.1);
+    color: var(--warm);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+}
+
+/* Timeline */
+.diary-timeline {
+    border-top: 1px solid var(--border);
+    padding: 16px 24px 12px;
+    max-height: 220px;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.timeline-card {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.timeline-card:hover { background: rgba(196,184,224,0.04); }
+.timeline-card:last-child { border-bottom: none; }
+.timeline-card-date { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.timeline-card-preview { font-size: 13px; line-height: 1.5; color: var(--text); }
+.timeline-card-meta { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+
+/* Diary Reader */
+.note-back-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 13px;
+    margin-bottom: 20px;
+    padding: 4px 0;
+}
+.note-back-btn:hover { color: var(--warm); }
+.diary-reader {
+    position: absolute;
+    inset: 0;
+    background: var(--ink);
+    z-index: 10;
+    overflow-y: auto;
+    padding: 24px;
+    max-width: 700px;
+    margin: 0 auto;
+}
+.diary-reader-date {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 16px;
+}
+.diary-reader-content {
+    font-family: var(--font-reading);
+    font-size: 16px;
+    line-height: 1.8;
+    color: var(--text);
+}
+.diary-reader-content h1, .diary-reader-content h2, .diary-reader-content h3 { margin: 20px 0 10px; color: var(--accent); }
+.diary-reader-content h1 { font-size: 22px; }
+.diary-reader-content h2 { font-size: 18px; }
+.diary-reader-content h3 { font-size: 16px; }
+.diary-reader-content p { margin: 0 0 12px; }
+.diary-reader-content code { font-family: var(--font-mono); font-size: 13px; color: var(--warm); }
+.diary-reader-content pre { background: var(--elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; overflow-x: auto; margin: 12px 0; font-size: 13px; }
+.diary-reader-content pre code { color: var(--text); }
+.diary-reader-content a { color: var(--warm); }
+
+/* ===== MOBILE ===== */
+@media (max-width: 768px) {
+    .diary-composer { padding: 16px 16px 0; }
+    .diary-timeline { padding: 12px 16px 12px; max-height: 180px; }
+    .diary-actions { margin: 12px 0 16px; }
+    .diary-reader { padding: 16px; }
+}

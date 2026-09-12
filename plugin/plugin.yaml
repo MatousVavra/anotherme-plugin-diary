@@ -1,0 +1,20 @@
+name: diary
+version: 0.1.0
+description: Diary entries with AI analysis, timeline, and mood tracking
+author: AnotherMe
+entrypoint: plugin
+capabilities:
+  - routes
+  - ui
+dependencies:
+  - memory
+ui:
+  tab: Diary
+  icon: diary
+  order: 20
+settings:
+  - key: auto_extract
+    label: "Auto-extract facts"
+    type: toggle
+    default: true
+    description: "Automatically extract facts and people from diary entries"

@@ -15,6 +15,7 @@
         ></textarea>
         <div class="diary-actions">
             <button
+                x-show="AM.isPluginEnabled('stt')"
                 class="input-bar-mic"
                 @pointerdown.prevent="AM.voice && AM.voice.handleMicDown('diary', $event)"
                 @pointerup.prevent="AM.voice && AM.voice.handleMicUp('diary')"

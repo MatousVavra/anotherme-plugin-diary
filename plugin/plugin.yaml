@@ -1,5 +1,5 @@
 name: diary
-version: 0.1.0
+version: 0.2.0
 description: Diary entries with AI analysis, timeline, and mood tracking
 author: AnotherMe
 entrypoint: plugin
@@ -8,6 +8,13 @@ capabilities:
   - ui
 dependencies:
   - memory
+soft_dependencies:
+  - name: stt
+    enables: "voice diary input (mic button)"
+  - name: notes
+    enables: "open diary notes from the timeline"
+  - name: stories
+    enables: "seed question consumption from diary entries"
 ui:
   tab: Diary
   icon: diary

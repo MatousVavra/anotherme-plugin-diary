@@ -1,5 +1,5 @@
 name: diary
-version: 0.2.0
+version: 0.3.0
 description: Diary entries with AI analysis, timeline, and mood tracking
 author: AnotherMe
 entrypoint: plugin

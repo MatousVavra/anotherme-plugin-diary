@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, Response, UploadFile
 
 from typing import Optional
 
@@ -206,6 +206,7 @@ class Plugin:
 
         self._api = DiaryApi(self._vault)
         ctx.register_api("diary", self._api)
+        self._bg_tasks: set = set()
 
         router = APIRouter()
 
@@ -225,7 +226,7 @@ class Plugin:
             if audio and audio.filename:
                 audio_bytes = await audio.read()
                 if len(audio_bytes) > 0:
-                    audio_path = self._api.save_diary_audio(vn, audio_bytes, audio.filename)
+                    audio_path = await asyncio.to_thread(self._api.save_diary_audio, vn, audio_bytes, audio.filename)
 
             entry_dt = None
             if entry_at:
@@ -236,9 +237,9 @@ class Plugin:
                 except ValueError:
                     raise HTTPException(422, "Invalid entry_at timestamp")
 
-            rel = self._api.create_diary_entry(vn, content, mood, tag_list, audio_path, entry_dt)
-            asyncio.create_task(self._analyze_and_update(vn, content))
-            asyncio.create_task(self._event_bus.emit("diary_saved",
+            rel = await asyncio.to_thread(self._api.create_diary_entry, vn, content, mood, tag_list, audio_path, entry_dt)
+            self._spawn(self._analyze_and_update(vn, content, str(rel)))
+            self._spawn(self._event_bus.emit("diary_saved",
                 {"path": str(rel), "content": content, "mood": mood, "tags": tag_list}))
             return DiaryEntryResponse(
                 title=rel.stem, path=str(rel), type="diary",
@@ -249,8 +250,8 @@ class Plugin:
         @router.post("/generate", response_model=DiaryEntryResponse)
         async def generate_diary(body: DiaryGenerateRequest):
             vn = self._ctx.vault_name
-            rel = self._api.create_diary_entry(vn, "Generating...", body.mood, body.tags or [])
-            asyncio.create_task(self._diary_generate_task(vn, body))
+            rel = await asyncio.to_thread(self._api.create_diary_entry, vn, "Generating...", body.mood, body.tags or [])
+            self._spawn(self._diary_generate_task(vn, body, str(rel)))
             return DiaryEntryResponse(
                 title=rel.stem, path=str(rel), type="diary",
                 url=f"/diary/{rel.stem}", mood=body.mood, tags=body.tags or [],
@@ -267,32 +268,67 @@ class Plugin:
             files = sorted(diary_dir.glob("*.md"), reverse=True)
             if not files:
                 return {"content": "", "analysis": None}
-            content = files[0].read_text(encoding="utf-8")
+            try:
+                content = files[0].read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return {"content": "", "analysis": None}
             return {"content": content, "analysis": "included"}
 
         # GET /plugins/diary/timeline
-        @router.get("/timeline")
-        def diary_timeline():
+        @router.get('/timeline')
+        def diary_timeline(offset: int = Query(0, ge=0)):
             vn = self._ctx.vault_name
             vault = self._vault.vault_path(vn)
-            diary_dir = vault / "Diary"
+            diary_dir = vault / 'Diary'
             if not diary_dir.is_dir():
                 return []
             entries = []
-            for f in sorted(diary_dir.glob("*.md"), reverse=True)[:30]:
-                content = f.read_text(encoding="utf-8")
-                mood = self._vault.extract_frontmatter_field(content, "mood")
-                entry_at = self._vault.extract_frontmatter_field(content, "entry_at") or f.stem.replace("Diary ", "").replace("Diary-", "")
-                audio = bool(self._vault.extract_frontmatter_field(content, "audio"))
-                preview = ""
-                for line in content.split("\n"):
+            for f in sorted(diary_dir.glob('*.md'), reverse=True)[offset:]:
+                if len(entries) >= 30:
+                    break
+                try:
+                    content = f.read_text(encoding='utf-8')
+                except (OSError, UnicodeDecodeError):
+                    continue
+                mood = self._vault.extract_frontmatter_field(content, 'mood')
+                if not mood:
+                    mood_match = re.search(r'\*\*Mood:\*\*\s*(.+)', content)
+                    mood = mood_match.group(1).strip() if mood_match else None
+                entry_at = self._vault.extract_frontmatter_field(content, 'entry_at') or f.stem.replace('Diary ', '').replace('Diary-', '')
+                audio_rel = self._vault.extract_frontmatter_field(content, 'audio') or ''
+                analyzing = '_(analyzing…)' in content or 'Generating...' in content
+                preview = ''
+                for line in content.split('\n'):
                     line = line.strip()
-                    if line and not line.startswith("#") and not line.startswith("-") and not line.startswith("**"):
-                        if "##" not in line and "---" not in line:
+                    if line and not line.startswith('#') and not line.startswith('-') and not line.startswith('**'):
+                        if '##' not in line and '---' not in line:
                             preview = line[:120]
                             break
-                entries.append({"id": f.stem, "entry_at": entry_at, "date": entry_at, "mood": mood, "preview": preview, "filename": f.name, "audio": audio})
+                entries.append({
+                    'id': f.stem,
+                    'entry_at': entry_at,
+                    'date': entry_at,
+                    'mood': mood,
+                    'preview': preview,
+                    'filename': f.name,
+                    'audio': bool(audio_rel),
+                    'audio_file': Path(audio_rel).name if audio_rel else '',
+                    'analyzing': analyzing,
+                })
             return entries
+
+        # GET /plugins/diary/audio/{filename}
+        @router.get('/audio/{filename}')
+        async def diary_audio(filename: str):
+            if not filename or '..' in filename or '/' in filename or '\\' in filename:
+                raise HTTPException(400, 'Invalid audio filename')
+            vn = self._ctx.vault_name
+            audio_dir = self._vault.vault_path(vn) / 'Diary' / 'audio'
+            filepath = audio_dir / filename
+            if not filepath.is_file():
+                raise HTTPException(404, 'Audio not found')
+            data = await asyncio.to_thread(filepath.read_bytes)
+            return Response(content=data, media_type='audio/webm')
 
         # GET /plugins/diary/mood
         @router.get("/mood")
@@ -304,9 +340,15 @@ class Plugin:
                 return []
             points = []
             for f in sorted(diary_dir.glob("*.md"))[-90:]:
-                content = f.read_text(encoding="utf-8")
-                mood = self._vault.extract_frontmatter_field(content, "mood")
-                date = self._vault.extract_frontmatter_field(content, "date") or f.stem.replace("Diary ", "").replace("Diary-", "")
+                try:
+                    content = f.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                mood = self._vault.extract_frontmatter_field(content, 'mood')
+                if not mood:
+                    mood_match = re.search(r'\*\*Mood:\*\*\s*(.+)', content)
+                    mood = mood_match.group(1).strip() if mood_match else None
+                date = self._vault.extract_frontmatter_field(content, 'date') or f.stem.replace('Diary ', '').replace('Diary-', '')
                 if mood:
                     points.append({"date": date, "mood": mood})
             return points
@@ -360,6 +402,12 @@ class Plugin:
         if threads:
             return "## Unresolved diary threads:\n\n" + threads
         return None
+
+    def _spawn(self, coro):
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
 
     # --- Analysis pipeline methods ---
 
@@ -428,7 +476,7 @@ Rules:
             return []
         return [q for q in questions if isinstance(q, str)][:2]
 
-    async def _analyze_and_update(self, vault_name: str, content: str):
+    async def _analyze_and_update(self, vault_name: str, content: str, note_path: str):
         try:
             analysis = await self.analyze_diary_entry(content, vault_name)
             await asyncio.to_thread(self._apply_analysis, vault_name, analysis, content)
@@ -441,26 +489,27 @@ Rules:
                 questions = await self.generate_follow_up_questions(content, context_text, analysis)
                 await asyncio.to_thread(self._save_diary_seed_questions, vault_name, questions)
 
-            await asyncio.to_thread(self._update_latest_diary_markdown, vault_name, analysis)
+            await asyncio.to_thread(self._update_latest_diary_markdown, vault_name, analysis, note_path)
         except Exception:
             logging.getLogger(__name__).exception("Diary analysis failed")
-            await asyncio.to_thread(self._clear_analysis_placeholder, vault_name)
+            await asyncio.to_thread(self._clear_analysis_placeholder, vault_name, note_path)
 
     def _apply_analysis(self, vault_name: str, analysis: dict, raw_content: str):
         memory_api = self._ctx.get_plugin_api("memory")
         if memory_api:
-            for fact_key, fact_value in (analysis.get("facts") or {}).items():
+            facts = analysis.get("facts") if isinstance(analysis.get("facts"), dict) else {}
+            for fact_key, fact_value in facts.items():
                 if isinstance(fact_value, str) and fact_key and fact_value:
                     memory_api.save_fact(vault_name, fact_key, fact_value)
             for person in analysis.get("people") or []:
+                if not isinstance(person, dict):
+                    continue
                 name = person.get("name")
                 rel = person.get("relationship")
                 if name:
                     memory_api.save_person(vault_name, name, rel, "", [])
-        facts_to_save = analysis.get("facts") or {}
-        if memory_api and facts_to_save:
-            memory_api.update_identity_facts(vault_name, facts_to_save)
-        if memory_api:
+            if facts:
+                memory_api.update_identity_facts(vault_name, facts)
             for project in analysis.get("projects") or []:
                 if project and isinstance(project, str):
                     try:
@@ -474,69 +523,64 @@ Rules:
         lines = [f"- [ ] {q}" for q in questions]
         self._vault.append_to_note(vault_name, "System/SEEDS.md", "\n" + "\n".join(lines) + "\n")
 
-    def _update_latest_diary_markdown(self, vault_name: str, analysis: dict):
-        vault = self._vault.vault_path(vault_name)
-        diary_dir = vault / "Diary"
-        if not diary_dir.is_dir():
+    def _update_latest_diary_markdown(self, vault_name: str, analysis: dict, note_path: str | None):
+        if not note_path:
             return
-        files = sorted(diary_dir.glob("*.md"), reverse=True)
-        for f in files:
-            try:
-                text = f.read_text(encoding="utf-8")
-                if "_(analyzing…)_" not in text:
-                    continue
-                mood = analysis.get("mood", "")
-                tags = analysis.get("tags", [])
-                summary = analysis.get("summary", "")
-                replacement = ""
-                if mood:
-                    replacement += f"**Mood:** {mood}\n\n"
-                if tags:
-                    replacement += f"**Tags:** {', '.join(tags)}\n\n"
-                if summary:
-                    replacement += summary
-                else:
-                    replacement += "_No summary extracted._"
-                new_text = text.replace("_(analyzing…)_", replacement)
+        f = self._vault.vault_path(vault_name) / Path(note_path)
+        if not f.is_file():
+            return
+        try:
+            text = f.read_text(encoding="utf-8")
+            if "_(analyzing…)_" not in text:
+                return
+            mood = analysis.get("mood") if isinstance(analysis.get("mood"), str) else ""
+            tags = analysis.get("tags") if isinstance(analysis.get("tags"), list) else []
+            tags = [t for t in tags if isinstance(t, str)]
+            summary = analysis.get("summary") if isinstance(analysis.get("summary"), str) else ""
+            replacement = ""
+            if mood:
+                replacement += f"**Mood:** {mood}\n\n"
+            if tags:
+                replacement += f"**Tags:** {', '.join(tags)}\n\n"
+            if summary:
+                replacement += summary
+            else:
+                replacement += "_No summary extracted._"
+            new_text = text.replace("_(analyzing…)_", replacement)
+            f.write_text(new_text, encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            pass
+
+    def _clear_analysis_placeholder(self, vault_name: str, note_path: str | None):
+        if not note_path:
+            return
+        f = self._vault.vault_path(vault_name) / Path(note_path)
+        if not f.is_file():
+            return
+        try:
+            text = f.read_text(encoding="utf-8")
+            if "_(analyzing…)_" in text:
+                new_text = text.replace("_(analyzing…)_", "_Analysis unavailable._")
                 f.write_text(new_text, encoding="utf-8")
-                break
-            except (OSError, UnicodeDecodeError):
-                continue
+        except (OSError, UnicodeDecodeError):
+            pass
 
-    def _clear_analysis_placeholder(self, vault_name: str):
-        vault = self._vault.vault_path(vault_name)
-        diary_dir = vault / "Diary"
-        if not diary_dir.is_dir():
+    def _replace_generating_placeholder(self, vault_name: str, new_content: str | None, note_path: str | None):
+        if not note_path:
             return
-        files = sorted(diary_dir.glob("*.md"), reverse=True)
-        for f in files:
-            try:
-                text = f.read_text(encoding="utf-8")
-                if "_(analyzing…)_" in text:
-                    new_text = text.replace("_(analyzing…)_", "_Analysis unavailable._")
-                    f.write_text(new_text, encoding="utf-8")
-                    break
-            except (OSError, UnicodeDecodeError):
-                continue
-
-    def _replace_generating_placeholder(self, vault_name: str, new_content: str | None):
-        vault = self._vault.vault_path(vault_name)
-        diary_dir = vault / "Diary"
-        if not diary_dir.is_dir():
+        f = self._vault.vault_path(vault_name) / Path(note_path)
+        if not f.is_file():
             return
-        files = sorted(diary_dir.glob("*.md"), reverse=True)
-        for f in files:
-            try:
-                text = f.read_text(encoding="utf-8")
-                if "Generating..." in text:
-                    replacement = new_content if new_content else "_Generation failed._"
-                    new_text = text.replace("Generating...", replacement)
-                    f.write_text(new_text, encoding="utf-8")
-                    break
-            except (OSError, UnicodeDecodeError):
-                continue
+        try:
+            text = f.read_text(encoding="utf-8")
+            if "Generating..." in text:
+                replacement = new_content if new_content else "_Generation failed._"
+                new_text = text.replace("Generating...", replacement)
+                f.write_text(new_text, encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            pass
 
-    async def _diary_generate_task(self, vault_name: str, body):
+    async def _diary_generate_task(self, vault_name: str, body, note_path: str):
         try:
             today = self._api.get_today_context(vault_name)
             if body.include_recent_diary:
@@ -549,8 +593,8 @@ Rules:
                 messages=[{"role": "user", "content": prompt}],
                 caller="diary",
             )
-            await asyncio.to_thread(self._replace_generating_placeholder, vault_name, generated_text)
-            await self._analyze_and_update(vault_name, generated_text)
+            await asyncio.to_thread(self._replace_generating_placeholder, vault_name, generated_text, note_path)
+            await self._analyze_and_update(vault_name, generated_text, note_path)
         except Exception:
             logging.getLogger(__name__).exception("Diary generation failed")
-            await asyncio.to_thread(self._replace_generating_placeholder, vault_name, None)
+            await asyncio.to_thread(self._replace_generating_placeholder, vault_name, None, note_path)

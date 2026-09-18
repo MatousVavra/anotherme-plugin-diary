@@ -25,3 +25,4 @@ settings:
     type: toggle
     default: true
     description: "Automatically extract facts and people from diary entries"
+tables: []
